@@ -2,23 +2,21 @@
 """
 模块一：食物识别完整实验框架
 包含：
-1. 基线对比 - Chinese-CLIP vs LLaVA (Qwen-VL)
+1. 基线对比 - English-CLIP vs LLaVA (Qwen2-VL)
 2. 消融实验 - 有/无检测器、有/无CoT
 3. Bonus - 多食物解耦与定位 (OWL-ViT)
 4. 场景标签 + 跨场景分析
-5. 失败案例自动收集
 """
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
-import os
 import json
 import torch
 import pandas as pd
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score
 from collections import Counter
 import matplotlib.pyplot as plt
 import pyarrow.ipc as ipc
@@ -35,7 +33,7 @@ RANDOM_SEED = 42
 
 # 高频类别配置
 USE_TOP_K = True
-TOP_K = 50
+TOP_K = 55
 
 # 消融实验配置
 USE_DETECTION = False
@@ -85,10 +83,11 @@ class LocalDataset:
 
 
 # ============================================================
-# 加载数据集和模型
+# 加载数据集
 # ============================================================
 print("\n[1] 加载数据集...")
 ds = LocalDataset(ARROW_FILE)
+
 
 # ============================================================
 # 统计类别并筛选
@@ -122,15 +121,50 @@ else:
     valid_indices = None
     print(f"    使用全量 {len(dish_names)} 类")
 
-print("\n[3] 加载 Chinese-CLIP...")
-from transformers import ChineseCLIPProcessor, ChineseCLIPModel
-clip_processor = ChineseCLIPProcessor.from_pretrained("OFA-Sys/chinese-clip-vit-base-patch16")
-clip_model = ChineseCLIPModel.from_pretrained("OFA-Sys/chinese-clip-vit-base-patch16")
-clip_model = clip_model.to(DEVICE)
-clip_model.eval()
 
 # ============================================================
-# 加载 OWL-ViT 多食物检测模型（新增）
+# 加载 English-CLIP
+# ============================================================
+print("\n[3] 加载 English-CLIP...")
+from transformers import CLIPProcessor, CLIPModel
+clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch16")
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16")
+clip_model = clip_model.to(DEVICE)
+clip_model.eval()
+print("    ✅ English-CLIP 加载成功")
+
+
+# ============================================================
+# 加载 LLaVA (Qwen2-VL)
+# ============================================================
+print("\n[3.1] 加载 LLaVA (Qwen2-VL)...")
+LLAVA_AVAILABLE = False
+llava_model = None
+llava_processor = None
+
+try:
+    from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+    
+    model_name = "Qwen/Qwen2-VL-2B-Instruct"
+    
+    print("    正在加载 Qwen2-VL-2B，首次可能需要几分钟...")
+    llava_processor = AutoProcessor.from_pretrained(model_name)
+    llava_model = Qwen2VLForConditionalGeneration.from_pretrained(model_name)
+    llava_model = llava_model.to(DEVICE)
+    llava_model.eval()
+    
+    LLAVA_AVAILABLE = True
+    print("    ✅ LLaVA (Qwen2-VL) 加载成功")
+    
+except ImportError as e:
+    print(f"    ❌ 导入失败: {e}")
+    print("    💡 请确保 transformers >= 4.45.0")
+except Exception as e:
+    print(f"    ❌ LLaVA 加载失败: {e}")
+
+
+# ============================================================
+# 加载 OWL-ViT（Bonus用）
 # ============================================================
 print("\n[3.5] 加载 OWL-ViT 多食物检测模型...")
 try:
@@ -141,14 +175,13 @@ try:
     owl_model.eval()
     OWL_AVAILABLE = True
     print("    ✅ OWL-ViT 加载成功")
-except ImportError:
+except Exception as e:
     OWL_AVAILABLE = False
-    print("    ❌ OWL-ViT 未安装，跳过多食物检测")
-    print("    安装命令: pip install transformers torch pillow")
+    print(f"    ❌ OWL-ViT 加载失败: {e}")
 
 
 # ============================================================
-# 编码文本特征
+# 编码文本特征（英文CLIP）
 # ============================================================
 print("\n[4] 编码文本特征...")
 
@@ -160,8 +193,7 @@ for i in tqdm(range(0, len(dish_names), batch_size), desc="编码文本特征"):
     inputs = clip_processor(
         text=batch_names, 
         return_tensors="pt", 
-        padding="max_length",
-        max_length=77,
+        padding=True,
         truncation=True
     )
     inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
@@ -177,6 +209,8 @@ for i in tqdm(range(0, len(dish_names), batch_size), desc="编码文本特征"):
         
         if len(batch_features.shape) == 3:
             batch_features = batch_features.mean(dim=1)
+        elif len(batch_features.shape) == 1:
+            batch_features = batch_features.unsqueeze(0)
         
         batch_features = batch_features / batch_features.norm(dim=-1, keepdim=True)
     text_features_list.append(batch_features.cpu())
@@ -216,7 +250,7 @@ if SAMPLE_SIZE > 0 and len(image_paths) > SAMPLE_SIZE:
 
 
 # ============================================================
-# Chinese-CLIP 识别函数
+# English-CLIP 识别函数
 # ============================================================
 def recognize_clip(image_paths, batch_size=64):
     results = []
@@ -283,7 +317,7 @@ def recognize_clip(image_paths, batch_size=64):
                 results.append({
                     "image_path": path,
                     "data_idx": data_idx,
-                    "model": "chinese_clip",
+                    "model": "english_clip",
                     "true_label": true_label,
                     "pred_label": dish_names[pred_idx],
                     "top5": [dish_names[top5_preds[idx][j].item()] for j in range(len(top5_preds[idx]))],
@@ -295,19 +329,106 @@ def recognize_clip(image_paths, batch_size=64):
 
 
 # ============================================================
-# OWL-ViT 多食物检测函数（新增）
+# LLaVA (Qwen2-VL) 识别函数
+# ============================================================
+def recognize_llava(image_paths, sample_size=50):
+    results = []
+    
+    if not LLAVA_AVAILABLE:
+        print("    ⚠️ LLaVA 不可用，跳过")
+        return results
+    
+    print(f"    LLaVA 正在处理 {min(sample_size, len(image_paths))} 张图片...")
+    print("    ⚠️ Qwen2-VL 在 CPU 上较慢，请耐心等待")
+    
+    for i, path in enumerate(tqdm(image_paths[:sample_size], desc="LLaVA识别")):
+        try:
+            img = Image.open(path).convert("RGB")
+            
+            prompt = "What food is in this image? Answer with a single short phrase, just the food name."
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": img},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ]
+            
+            inputs = llava_processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt"
+            ).to(DEVICE)
+            
+            with torch.no_grad():
+                outputs = llava_model.generate(
+                    inputs,
+                    max_new_tokens=50,
+                    do_sample=False,
+                    temperature=0.1
+                )
+            
+            pred = llava_processor.decode(outputs[0], skip_special_tokens=True)
+            
+            # 提取助手回复
+            if "assistant" in pred:
+                pred = pred.split("assistant")[-1].strip()
+            if "Assistant:" in pred:
+                pred = pred.split("Assistant:")[-1].strip()
+            if ":" in pred and "assistant" not in pred.lower():
+                pred = pred.split(":")[-1].strip()
+            
+            basename = os.path.basename(path)
+            idx_str = basename.split(".")[0]
+            try:
+                data_idx = int(idx_str)
+                true_label = ds[data_idx].get(dish_name_col)
+            except:
+                true_label = None
+                data_idx = -1
+            
+            correct = False
+            if true_label and pred:
+                true_lower = true_label.lower().strip()
+                pred_lower = pred.lower().strip()
+                if true_lower in pred_lower or pred_lower in true_lower:
+                    correct = True
+                pred_words = pred_lower.split()[:5]
+                if true_lower in " ".join(pred_words):
+                    correct = True
+            
+            results.append({
+                "image_path": path,
+                "data_idx": data_idx,
+                "model": "llava",
+                "true_label": true_label,
+                "pred_label": pred.strip(),
+                "confidence": 0.5,
+                "scene": "unknown",
+                "correct": correct
+            })
+            
+        except Exception as e:
+            print(f"    LLaVA 失败: {os.path.basename(path)}, 错误: {e}")
+            continue
+    
+    print(f"    LLaVA 完成 {len(results)} 张")
+    return results
+
+
+# ============================================================
+# OWL-ViT 多食物检测函数（Bonus）
 # ============================================================
 def detect_multiple_foods_owl(image_path, query_texts=None):
-    """使用 OWL-ViT 检测图片中的多个食物区域"""
     if not OWL_AVAILABLE:
         return []
-    
     try:
         image = Image.open(image_path).convert("RGB")
-        
-        # 默认查询：用前20类食物作为查询
         if query_texts is None:
-            query_texts = [dish_names[:20]]  # 取前20类作为查询
+            query_texts = [dish_names[:20]]
         
         inputs = owl_processor(text=query_texts, images=image, return_tensors="pt")
         inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
@@ -333,87 +454,39 @@ def detect_multiple_foods_owl(image_path, query_texts=None):
                 })
         return detections
     except Exception as e:
-        print(f"    OWL-ViT检测失败: {e}")
         return []
-
-
-# ============================================================
-# LLaVA / Qwen-VL 识别函数
-# ============================================================
-def recognize_llava(image_paths, sample_size=200):
-    results = []
-    try:
-        from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-        model_name = "Qwen/Qwen2-VL-2B-Instruct"
-        processor = AutoProcessor.from_pretrained(model_name)
-        model = Qwen2VLForConditionalGeneration.from_pretrained(model_name)
-        model = model.to(DEVICE)
-        model.eval()
-        
-        for i, path in enumerate(tqdm(image_paths[:sample_size], desc="LLaVA识别")):
-            try:
-                img = Image.open(path).convert("RGB")
-                prompt = "What food is this? Answer with one word or short phrase."
-                inputs = processor(text=prompt, images=img, return_tensors="pt")
-                inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
-                with torch.no_grad():
-                    outputs = model.generate(**inputs, max_new_tokens=20)
-                pred = processor.decode(outputs[0], skip_special_tokens=True)
-                basename = os.path.basename(path)
-                idx_str = basename.split(".")[0]
-                try:
-                    data_idx = int(idx_str)
-                    true_label = ds[data_idx].get(dish_name_col)
-                except:
-                    true_label = None
-                    data_idx = -1
-                results.append({
-                    "image_path": path,
-                    "data_idx": data_idx,
-                    "model": "llava",
-                    "true_label": true_label,
-                    "pred_label": pred.strip(),
-                    "confidence": 0.5,
-                    "scene": "unknown",
-                    "correct": (true_label and true_label.lower() in pred.lower()) if true_label else None
-                })
-            except Exception as e:
-                print(f"LLaVA 识别失败: {path}, 错误: {e}")
-                continue
-    except ImportError:
-        print("    警告: Qwen-VL 未安装，跳过 LLaVA 基线对比")
-    return results
 
 
 # ============================================================
 # 运行实验
 # ============================================================
-print("\n[6] 运行基线对比实验...")
+print("\n[6] 运行识别实验...")
 
-# 6a. Chinese-CLIP 识别
+# 6a. English-CLIP 识别
 clip_results = recognize_clip(image_paths, BATCH_SIZE)
 valid_clip = [r for r in clip_results if r["true_label"] is not None]
 if valid_clip:
     clip_acc = accuracy_score([r["true_label"] for r in valid_clip], [r["pred_label"] for r in valid_clip])
     clip_top5_acc = sum(1 for r in valid_clip if r["true_label"] in r["top5"]) / len(valid_clip)
-    print(f"    Chinese-CLIP Top-1: {clip_acc*100:.2f}%")
-    print(f"    Chinese-CLIP Top-5: {clip_top5_acc*100:.2f}%")
+    print(f"    English-CLIP Top-1: {clip_acc*100:.2f}%")
+    print(f"    English-CLIP Top-5: {clip_top5_acc*100:.2f}%")
 else:
     clip_acc = 0
     clip_top5_acc = 0
 
-# 6b. LLaVA 识别
-llava_results = recognize_llava(image_paths, sample_size=min(200, len(image_paths)))
-valid_llava = [r for r in llava_results if r["true_label"] is not None and r["pred_label"]]
+# 6b. LLaVA (Qwen2-VL) 识别（只取50张，CPU慢）
+print("\n[6b] 运行 LLaVA (Qwen2-VL) 识别...")
+llava_results = recognize_llava(image_paths, sample_size=50)
+valid_llava = [r for r in llava_results if r["true_label"] is not None]
 if valid_llava:
     llava_acc = sum(1 for r in valid_llava if r["correct"]) / len(valid_llava) if valid_llava else 0
-    print(f"    LLaVA Top-1: {llava_acc*100:.2f}%")
+    print(f"    LLaVA (Qwen2-VL) Top-1: {llava_acc*100:.2f}%")
 else:
     llava_acc = 0
 
 
 # ============================================================
-# 消融实验（含 Top-1 和 Top-5）
+# 消融实验（基于英文CLIP结果）
 # ============================================================
 print("\n[7] 运行消融实验...")
 
@@ -466,7 +539,6 @@ for r in ablation_results:
 print("\n[8] Bonus: 多食物解耦测试 (OWL-ViT)...")
 
 if OWL_AVAILABLE and len(image_paths) > 0:
-    # 直接取前5张图，不管是不是混合餐盘
     test_images = image_paths[:5]
     for img_path in test_images:
         detections = detect_multiple_foods_owl(img_path)
@@ -475,6 +547,7 @@ if OWL_AVAILABLE and len(image_paths) > 0:
             print(f"      - {d['label']} (置信度: {d['confidence']:.2f})")
 else:
     print("    OWL-ViT 未加载或没有图片，跳过测试")
+
 
 # ============================================================
 # 跨场景分析
@@ -495,32 +568,33 @@ for scene in ["standard", "real", "challenge"]:
 # ============================================================
 print("\n[10] 保存结果...")
 
+# 合并 CLIP 和 LLaVA 结果
 all_results = clip_results + llava_results
-df = pd.DataFrame(all_results)
-df.to_csv("experiment_results.csv", index=False, encoding="utf-8-sig")
+df_results = pd.DataFrame(all_results)
+df_results.to_csv("experiment_results.csv", index=False, encoding="utf-8-sig")
 print("    结果已保存: experiment_results.csv")
 
 summary = {
     "mode": f"top_{TOP_K}" if USE_TOP_K else "full",
     "num_classes": len(dish_names),
-    "baseline": {
-        "chinese_clip_top1": clip_acc,
-        "chinese_clip_top5": clip_top5_acc,
-        "llava": llava_acc
-    },
-    "ablation": [
-    {
-        "config": r["config"],
-        "detection": r["detection"],
-        "cot": r["cot"],
-        "accuracy_top1": r["accuracy_top1"],
-        "accuracy_top5": r["accuracy_top5"]
-    }
-    for r in ablation_results
-],
-    "scene_stats": scene_stats,
     "total_images": len(image_paths),
-    "valid_images": len(valid_clip)
+    "valid_images": len(valid_clip),
+    "english_clip_top1": clip_acc,
+    "english_clip_top5": clip_top5_acc,
+    "llava_top1": llava_acc,
+    "llava_samples": len(valid_llava),
+    "llava_available": LLAVA_AVAILABLE,
+    "ablation": [
+        {
+            "config": r["config"],
+            "detection": r["detection"],
+            "cot": r["cot"],
+            "accuracy_top1": r["accuracy_top1"],
+            "accuracy_top5": r["accuracy_top5"]
+        }
+        for r in ablation_results
+    ],
+    "scene_stats": scene_stats
 }
 with open("experiment_summary.json", "w", encoding="utf-8") as f:
     json.dump(summary, f, ensure_ascii=False, indent=2)
@@ -537,28 +611,30 @@ plt.rcParams['axes.unicode_minus'] = False
 
 fig, axes = plt.subplots(2, 2, figsize=(14, 12))
 
-# 1. 基线对比
+# 1. 基线对比 (CLIP vs LLaVA)
 ax1 = axes[0, 0]
-models = ["Chinese-CLIP", "LLaVA"]
+models = ["English-CLIP", "LLaVA"]
 top1_accs = [clip_acc*100, llava_acc*100]
 top5_accs = [clip_top5_acc*100, 0]
+
 x = np.arange(len(models))
 width = 0.35
 bars1 = ax1.bar(x - width/2, top1_accs, width, label='Top-1', color="#3498db")
 bars2 = ax1.bar(x + width/2, top5_accs, width, label='Top-5', color="#2ecc71")
 ax1.set_ylabel("准确率 (%)")
-ax1.set_title("基线对比")
+ax1.set_title("基线对比: CLIP vs LLaVA")
 ax1.set_xticks(x)
 ax1.set_xticklabels(models)
 ax1.set_ylim(0, 105)
 ax1.legend()
+
 for bar, acc in zip(bars1, top1_accs):
     ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f"{acc:.1f}%", ha="center")
 for bar, acc in zip(bars2, top5_accs):
     if acc > 0:
         ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f"{acc:.1f}%", ha="center")
 
-# 2. 消融实验（Top-1 和 Top-5 对比）
+# 2. 消融实验
 ax2 = axes[0, 1]
 names = [r["config"] for r in ablation_results]
 top1_accs = [r["accuracy_top1"]*100 for r in ablation_results]
@@ -609,7 +685,11 @@ print("\n✅ 全部实验完成!")
 print(f"   模式: {'前' + str(TOP_K) + '类' if USE_TOP_K else '全量'}")
 print(f"   总图片: {len(image_paths)} 张")
 print(f"   类别数: {len(dish_names)}")
-print(f"   CLIP Top-1: {clip_acc*100:.2f}%")
-print(f"   CLIP Top-5: {clip_top5_acc*100:.2f}%")
+print(f"   English-CLIP Top-1: {clip_acc*100:.2f}%")
+print(f"   English-CLIP Top-5: {clip_top5_acc*100:.2f}%")
+if LLAVA_AVAILABLE:
+    print(f"   LLaVA (Qwen2-VL) Top-1: {llava_acc*100:.2f}%")
+else:
+    print(f"   LLaVA (Qwen2-VL): 不可用")
 print(f"   消融实验: {len(ablation_results)} 组")
 print(f"   场景: {len(scene_stats)} 种")
