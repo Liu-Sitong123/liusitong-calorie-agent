@@ -1,0 +1,285 @@
+失败案例分析1：
+### 一、数据概览
+
+从 `experiment_results.csv` 中提取了 **677 条有效记录**，其中预测正确（`correct=True`）约 45%，错误约 55%。
+
+---
+
+### 二、典型失败案例（15组）
+
+| # | 图片 | 真实标签 | 预测标签 | Top5 | 置信度 | 失败类型 |
+|---|------|----------|----------|------|--------|----------|
+| 1 | 000000.jpg | Fried Chicken | Fried Chicken Wings | Fried Chicken Wings, Fried Chicken, Roasted Chicken, Stir-fried Chicken with Vegetables, Mixed Asian Cuisine | 0.020 | 混淆（鸡类细分） |
+| 2 | 000008.jpg | Noodle Soup | Beef Noodle Soup | Beef Noodle Soup, Meat Soup, Noodle Soup, Spicy Noodle Soup, Mixed Chinese Dishes | 0.020 | 混淆（汤面类） |
+| 3 | 000023.jpg | Hot Pot | Mixed Chinese Dishes | Mixed Chinese Dishes, Mixed Asian Dishes, Mixed Asian Cuisine, Hot Pot, Meat Soup | 0.020 | 混淆（混合菜系） |
+| 4 | 000031.jpg | Chicken Stir-Fry | Stir-fried Chicken with Vegetables | Stir-fried Chicken with Vegetables, Chicken Stir-Fry, Beef Stir-Fry, Mixed Chinese Dishes, Mixed Asian Cuisine | 0.020 | 混淆（炒鸡类） |
+| 5 | 000043.jpg | Braised Pork | Mixed Chinese Dishes | Mixed Chinese Dishes, Braised Pork, Braised Meat, Mixed Asian Dishes, Braised Pork Belly | 0.019 | 高置信度错误 |
+| 6 | 000058.jpg | Spicy Noodles | Spicy Noodle Soup | Spicy Noodle Soup, Spicy Noodles, Noodle Bowl, Vegetable Noodles, Beef Noodle Soup | 0.020 | 混淆（面条vs汤） |
+| 7 | 000064.jpg | Hot Pot | Mixed Chinese Dishes | Mixed Chinese Dishes, Mixed Asian Dishes, Hot Pot, Mixed Asian Cuisine, Noodle Bowl | 0.020 | 高置信度错误 |
+| 8 | 000072.jpg | Braised Pork Belly | Mixed Asian Cuisine | Mixed Asian Cuisine, Mixed Chinese Dishes, Braised Pork Belly, Mixed Asian Dishes, Grilled Meat Skewers | 0.019 | 混淆（混合菜系） |
+| 9 | 000083.jpg | Braised Pork | Steamed Fish | Steamed Fish, Mixed Asian Cuisine, Braised Pork, Mixed Chinese Dishes, Braised Pork Belly | 0.019 | 跨类别错误 |
+| 10 | 000092.jpg | Vegetable Soup | Beef Noodle Soup | Beef Noodle Soup, Noodle Soup, Vegetable Soup, Spicy Noodle Soup, Vegetable Noodles | 0.020 | 混淆（汤类） |
+| 11 | 000108.jpg | Spicy Crawfish | Seafood Platter | Seafood Platter, Mixed Chinese Dishes, Mixed Asian Cuisine, Mixed Asian Dishes, Spicy Crawfish | 0.019 | 混淆（海鲜类） |
+| 12 | 000136.jpg | Vegetable Stir-Fry | Mixed Asian Dishes | Mixed Asian Dishes, Mixed Asian Cuisine, Mixed Chinese Dishes, Vegetable Stir-Fry, Stir-fried Chicken with Vegetables | 0.019 | 混淆（混合类） |
+| 13 | 000173.jpg | Lychee | Apples | Apples, Lychee, Apple, Cherries, Fruit Salad | 0.020 | 水果混淆 |
+| 14 | 000196.jpg | Apple | Lychee | Lychee, Vegetable Soup, Watermelon, Fruit Salad, Apple | 0.019 | 水果混淆 |
+| 15 | 000205.jpg | Mixed Asian Cuisine | Hot Pot | Hot Pot, Mixed Chinese Dishes, Mixed Asian Dishes, Mixed Asian Cuisine, Meat Soup | 0.020 | 混淆（混合类） |
+| 16 | 000212.jpg | Stir-fried Chicken with Vegetables | Chicken Stir-Fry | Chicken Stir-Fry, Stir-fried Chicken with Vegetables, Mixed Asian Dishes, Mixed Chinese Dishes, Mixed Asian Cuisine | 0.020 | 混淆（炒鸡类） |
+| 17 | 000225.jpg | Noodle Soup | Beef Noodle Soup | Beef Noodle Soup, Spicy Noodle Soup, Mixed Chinese Dishes, Mixed Asian Dishes, Mixed Asian Cuisine | 0.020 | 混淆（汤面类） |
+| 18 | 000273.jpg | Sushi | Mapo Tofu | Mapo Tofu, Birthday Cake, Dumplings, Grilled Skewers, Sushi | 0.019 | 跨类别严重错误 |
+| 19 | 000367.jpg | Apple | Lychee | Lychee, Fruit Salad, Watermelon, Vegetable Soup, Apples | 0.019 | 水果混淆 |
+| 20 | 000508.jpg | Steamed Fish | Mixed Chinese Dishes | Mixed Chinese Dishes, Steamed Dumplings, Dumplings, Hot Pot, Steamed Fish | 0.019 | 混淆（鱼vs混合） |
+
+---
+
+### 三、失败模式分析
+
+#### 模式1：细粒度混淆（同类别内混淆）
+
+| 混淆对 | 示例 | 原因 |
+|--------|------|------|
+| Fried Chicken → Fried Chicken Wings | #1 | 视觉相似度高 |
+| Noodle Soup → Beef Noodle Soup | #2, #17 | 都是汤面类 |
+| Spicy Noodles → Spicy Noodle Soup | #6 | 干湿面条混淆 |
+| Chicken Stir-Fry → Stir-fried Chicken with Vegetables | #4 | 炒鸡类相似 |
+
+#### 模式2：混合菜系作为"垃圾桶"类别
+
+| 真实类别 | 被误判为 | 示例 |
+|----------|----------|------|
+| Hot Pot | Mixed Chinese Dishes | #3, #7 |
+| Braised Pork | Mixed Chinese Dishes | #5 |
+| Vegetable Stir-Fry | Mixed Asian Dishes | #12 |
+| Braised Pork Belly | Mixed Asian Cuisine | #8 |
+
+**原因**：`Mixed Chinese Dishes` 和 `Mixed Asian Cuisine` 是语义宽泛的类别，模型倾向于将不确定的图片归入这些"垃圾桶"类别。
+
+#### 模式3：水果类混淆
+
+| 混淆对 | 示例 |
+|--------|------|
+| Lychee → Apples | #13 |
+| Apple → Lychee | #14, #19 |
+
+**原因**：水果在视觉上相似（圆形、颜色接近），且都是 fruits 大类。
+
+#### 模式4：跨类别严重错误
+
+| 真实类别 | 被误判为 | 示例 | 严重程度 |
+|----------|----------|------|----------|
+| Sushi → Mapo Tofu | #18 | 极高 |
+| Braised Pork → Steamed Fish | #9 | 高 |
+
+**原因**：Sushi 和 Mapo Tofu 在视觉上可能都包含"块状食物"，但语义完全不相关。
+
+---
+
+### 四、置信度分析
+
+| 指标 | 正确预测 | 错误预测 |
+|------|----------|----------|
+| 平均置信度 | 0.0205 | 0.0198 |
+| 置信度 > 0.021 | 18% | 8% |
+
+**发现**：错误预测的平均置信度略低，但差异不明显。说明模型对许多错误预测仍然"自信"，这是需要关注的问题。
+
+---
+
+### 五、失败原因总结
+
+| 原因类型 | 占比（估算） | 代表案例 |
+|----------|-------------|----------|
+| 同类细粒度混淆 | 35% | #1, #2, #4, #6 |
+| 混合菜系"垃圾桶"效应 | 25% | #3, #5, #7, #8 |
+| 水果类混淆 | 15% | #13, #14, #19 |
+| 跨类别严重错误 | 10% | #18, #9 |
+| 其他/不确定 | 15% | - |
+
+---
+
+### 六、改进建议
+
+1. **细粒度区分**：增加更多炒鸡类、汤面类的训练数据
+2. **混合菜系问题**：考虑合并 `Mixed Chinese Dishes` 和 `Mixed Asian Cuisine` 为一个类别，或增加其判别特征
+3. **水果类**：水果类的视觉相似度高，需要更多纹理/颜色特征的区分
+4. **置信度校准**：模型对错误预测仍给出较高置信度，需要校准
+
+---
+
+失败案例分析2：
+
+## 📊 四组实验总体对比
+
+从 `experiment_comparison.csv` 可以快速看到整体结果：
+
+| 实验 | MAE (g) | RE (%) | STD | N |
+|------|---------|--------|-----|---|
+| Exp1_A+B+C | 204.31 | 123.22 | 2022.82 | 229 |
+| Exp2_A+B_fix+C | 199.51 | 109.26 | 2026.13 | 229 |
+| **Exp3_B_fix+C** | **49.43** | **40.40** | **47.79** | 229 |
+| Exp4_B_fix_C+MLP15 | 79.20 | 47.57 | 78.01 | 229 |
+
+**关键发现**：Exp3 效果最好，MAE 49.43g，RE 40.40%。
+
+---
+
+## 一、Exp1_A+B_C：三模型简单融合
+
+### 数据特征
+- **pred_A**：大量异常值（如 78811.57, 1437.38, 1567.80）
+- **pred_B**：全是0
+- **pred_C**：各类别的固定经验值（苹果180g、香蕉120g、甜甜圈128g等）
+- **融合策略**：conf_A + conf_B + conf_C 加权平均，但 conf_B 全为0，conf_A 仅在少数样本有值
+
+### 失败案例（≥5组）
+
+| # | 样本 | 真实值 | pred_A | pred_B | pred_C | 融合结果 | 问题分析 |
+|---|------|--------|--------|--------|--------|----------|----------|
+| 1 | grape002 | 219.5 | **78811.57** | 0 | 180.0 | 30865.49 | pred_A 异常值污染融合结果 |
+| 2 | grape001 | 448.0 | 1734.21 | 0 | 360.0 | 1013.47 | pred_A 严重高估 |
+| 3 | apple013 | 252.5 | 1437.38 | 0 | 180.0 | 798.93 | pred_A 异常值 |
+| 4 | apple014 | 236.0 | 1511.45 | 0 | 180.0 | 832.14 | pred_A 异常值 |
+| 5 | apple010 | 260.5 | 1498.38 | 0 | 187.0 | 829.84 | pred_A 异常值 |
+| 6 | banana010 | 173.5 | 1567.80 | 0 | 120.0 | 834.41 | pred_A 异常值 |
+| 7 | banana011 | 128.3 | 1362.44 | 0 | 120.0 | 741.46 | pred_A 异常值 |
+| 8 | banana010 | 173.5 | 800.60 | 0 | 142.0 | 480.47 | pred_A 异常值 |
+
+**失败原因总结**：
+1. **pred_A 模型完全不可用**：输出大量异常值（几千到几万），甚至比真实值大2个数量级
+2. **pred_B 模型全部失效**：所有预测均为0，完全无用
+3. **pred_C 过于简单**：每个类别使用固定经验值（苹果≈180g，香蕉≈120g），缺乏样本间差异
+4. **融合策略被 A 污染**：conf_A 权重高达0.49-0.51，导致异常值严重影响融合结果
+
+---
+
+## 二、Exp2_A+B_fix_C：改进融合
+
+### 数据特征
+- **pred_A**：仍然存在异常值（78811.57, 1437.38, 1511.45等）
+- **pred_B**：有了合理预测值（如香蕉50-143g，苹果0-90g）
+- **pred_C**：固定经验值
+- **融合策略**：conf_A 仍被启用
+
+### 失败案例（≥5组）
+
+| # | 样本 | 真实值 | pred_A | pred_B | pred_C | 融合结果 | 问题分析 |
+|---|------|--------|--------|--------|--------|----------|----------|
+| 1 | grape002 | 219.5 | **78811.57** | 0 | 250.0 | 30908.17 | pred_A 异常值 |
+| 2 | grape001 | 448.0 | 1734.21 | 0 | 380.0 | 1023.96 | pred_A 异常值 |
+| 3 | apple013 | 252.5 | 1437.38 | 0 | 180.0 | 798.93 | pred_A 异常值 |
+| 4 | apple014 | 236.0 | 1511.45 | 0 | 187.0 | 835.71 | pred_A 异常值 |
+| 5 | apple010 | 260.5 | 1498.38 | 0 | 187.0 | 829.84 | pred_A 异常值 |
+| 6 | banana010 | 173.5 | 1567.80 | 0 | 120.0 | 834.41 | pred_A 异常值 |
+| 7 | banana011 | 128.3 | 1362.44 | 0 | 120.0 | 741.46 | pred_A 异常值 |
+| 8 | lemon003 | 92.3 | 0 | 116.35 | 75.0 | **93.69** | ✅ 融合后接近真实值 |
+| 9 | egg007 | 68.9 | 0 | 80.10 | 58.0 | 68.01 | ✅ 融合后接近真实值 |
+| 10 | mango003 | 203.0 | 0 | 73.37 | 250.0 | 171.73 | 两者折中但仍有偏差 |
+
+**失败原因总结**：
+1. **pred_A 异常值问题未解决**：虽然 pred_B 改善了，但 conf_A 仍然在部分样本中被启用
+2. **pred_B 系统性偏低**：苹果类 pred_B 通常 0-90g，真实值 220-390g，严重低估
+3. **pred_C 作为"锚点"**：固定经验值缺乏灵活性，但比 A 模型可靠
+
+---
+
+## 三、Exp3_B_fix_C：最优方案
+
+### 数据特征
+- **pred_A 完全禁用**（全为0）
+- **pred_B**：合理预测值
+- **pred_C**：固定经验值
+- **融合策略**：conf_A=0，仅 B 和 C 加权融合
+
+### 失败案例（≥5组）
+
+| # | 样本 | 真实值 | pred_B | pred_C | 融合结果 | 误差 | 问题分析 |
+|---|------|--------|--------|--------|----------|------|----------|
+| 1 | apple002 | 232.5 | 40.42 | 289.0 | **180.08** | 52.42 | B严重低估，C高估，融合折中 |
+| 2 | apple016 | 272.5 | 46.93 | 170.0 | **119.98** | 152.52 | B太低，C也低于真实值 |
+| 3 | banana010 | 173.5 | 68.20 | 150.0 | **115.15** | 58.35 | B低估，C略低 |
+| 4 | banana005 | 153.5 | 142.99 | 120.0 | **129.82** | 23.68 | 两者都低估 |
+| 5 | mango001 | 192.3 | 19.86 | 250.0 | **154.90** | 37.40 | B极低，C过高 |
+| 6 | mango009 | 86.2 | 62.96 | 230.0 | **156.82** | 70.62 | C严重高估 |
+| 7 | lemon003 | 92.3 | 116.35 | 75.0 | **93.69** | 1.39 | ✅ 融合后很准 |
+| 8 | egg007 | 68.9 | 80.10 | 58.0 | **68.28** | 0.62 | ✅ 几乎完美 |
+| 9 | litchi002 | 39.8 | 103.21 | 15.0 | **49.27** | 9.47 | B高估，C低估，融合后较好 |
+| 10 | grape002 | 219.5 | 39.56 | 250.0 | **118.26** | 101.24 | 两者折中但差距大 |
+
+**失败原因总结**：
+1. **pred_C 固定经验值过于粗糙**：同类食物不同样本差异大（如苹果真实值 219-393g，但 pred_C 固定 170-200g）
+2. **pred_B 存在系统性偏差**：对于某些类别（如苹果、芒果）pred_B 系统性偏低
+3. **B 和 C 的互补效果**：当两者分别高估/低估时，融合后可能接近真实值；但当两者同向偏差时，融合结果仍不理想
+
+---
+
+## 四、Exp4_B_fix_C_MLP15：MLP 融合
+
+### 数据特征
+- 使用 MLP 网络学习融合权重（15维特征）
+- pred_A 禁用
+- 融合结果整体被压缩到较低值
+
+### 失败案例（≥5组）
+
+| # | 样本 | 真实值 | pred_B | pred_C | MLP融合 | 误差 | 问题分析 |
+|---|------|--------|--------|--------|---------|------|----------|
+| 1 | apple002 | 232.5 | 40.42 | 289.0 | **80.07** | 152.43 | MLP过度压低预测 |
+| 2 | apple014 | 236.0 | 0 | 280.0 | **142.11** | 93.89 | MLP压低C的贡献 |
+| 3 | banana009 | 183.5 | 0 | 180.0 | **91.44** | 92.06 | B=0导致结果减半 |
+| 4 | mango001 | 192.3 | 19.86 | 250.0 | **78.86** | 113.44 | MLP严重压低 |
+| 5 | grape001 | 448.0 | 0 | 320.0 | **162.52** | 285.48 | 大幅低估 |
+| 6 | grape001 | 448.0 | 0 | 450.0 | **228.57** | 219.43 | 大幅低估 |
+| 7 | grape001 | 448.0 | 0 | 380.0 | **193.01** | 254.99 | 大幅低估 |
+| 8 | lemon003 | 92.3 | 116.35 | 75.0 | **46.92** | 45.38 | MLP压缩过度 |
+| 9 | apple016 | 272.5 | 53.70 | 170.0 | **60.10** | 212.40 | 严重低估 |
+| 10 | mango010 | 104.3 | 20.41 | 180.0 | **60.64** | 43.66 | B太低，MLP压低 |
+
+**失败原因总结**：
+1. **MLP 过度压缩**：融合结果普遍偏低，对高值样本（葡萄、苹果、芒果）预测严重不足
+2. **B=0 时问题严重**：当 pred_B 为0时，MLP 输出约为 C 的一半，导致系统性低估
+3. **泛化能力差**：MLP 在训练集上可能过拟合，在测试集上表现不如简单的加权融合
+
+---
+
+## 五、四组实验综合对比
+
+### 5.1 各实验失败模式总结
+
+| 实验 | MAE | 主要失败模式 | 严重程度 |
+|------|-----|-------------|----------|
+| Exp1 | 204.31g | pred_A 异常值污染 | ⭐⭐⭐⭐⭐ |
+| Exp2 | 199.51g | pred_A 异常值 + B系统性偏低 | ⭐⭐⭐⭐⭐ |
+| **Exp3** | **49.43g** | B/C 同向偏差 | ⭐⭐ |
+| Exp4 | 79.20g | MLP过度压缩 | ⭐⭐⭐⭐ |
+
+### 5.2 各类别在最优方案（Exp3）中的表现
+
+| 类别 | MAE 估算 | 主要问题 |
+|------|---------|----------|
+| apple | ~50-80g | B系统性偏低，C固定值不灵活 |
+| banana | ~20-40g | 两者都偏低，但误差可接受 |
+| bread | ~15-25g | C值偏高（60g vs 真实26-33g） |
+| bun | ~10-30g | 表现较好 |
+| doughnut | ~15-25g | C值128g，真实50-66g，严重高估 |
+| egg | ~5-15g | 表现较好 |
+| grape | ~100-200g | 严重低估（C=320-450g，真实219-448g） |
+| lemon | ~10-25g | 表现较好 |
+| litchi | ~10-20g | 表现较好 |
+| mango | ~40-70g | C固定180-250g，不灵活 |
+
+### 5.3 关键洞察
+
+1. **pred_A 模型是完全失败的**：在 Exp3/4 中禁用 A 模型后，MAE 从 ~200g 降至 ~50-80g
+2. **简单加权融合优于 MLP**：Exp3（49.43g）优于 Exp4（79.20g）
+3. **pred_C 的固定值需要类别内校准**：同一类别不同样本差异大（如苹果 219-393g）
+4. **pred_B 和 pred_C 的互补是关键**：当 B 低估、C 高估时，融合效果最好
+
+---
+
+## 六、改进建议（基于失败分析）
+
+1. **pred_A 应完全弃用**：异常值太多，无实用价值
+2. **pred_C 应改为类别内回归**：而非固定值，考虑样本特征（如像素面积）
+3. **pred_B 需要校准**：对苹果、芒果等类别进行线性校准
+4. **融合策略保持简单**：Exp3 的 B+C 加权融合优于 MLP 方案
+5. **异常值检测**：对 pred_A 类异常值进行过滤（如 >1000g 视为无效）
